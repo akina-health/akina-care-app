@@ -1,0 +1,53 @@
+name: Build and Deploy Tauri App
+
+on:
+  repository_dispatch:
+    types: [ bitbucket-trigger ]
+  push:
+    branches: [ develop ]
+  pull_request:
+    branches: [ develop ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      # Log info from Bitbucket if triggered from there
+      - name: Log Bitbucket Info
+        if: github.event_name == 'repository_dispatch'
+        run: |
+          echo "Triggered from Bitbucket"
+          echo "Repository: ${{ github.event.client_payload.repository }}"
+          echo "Commit: ${{ github.event.client_payload.commit }}"
+          echo "Branch: ${{ github.event.client_payload.branch }}"
+          echo "Pipeline URL: ${{ github.event.client_payload.pipeline_url }}"
+        shell: bash
+
+      - name: Determine Branch to Checkout
+        run: |
+          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            echo "BRANCH=${{ github.event.client_payload.branch }}" >> $GITHUB_ENV
+          else
+            echo "BRANCH=develop" >> $GITHUB_ENV
+          fi
+        shell: bash
+
+      - name: Clone from Bitbucket (Dynamic Branch)
+        run: |
+          git clone --branch ${{ env.BRANCH }} ${{ secrets.BITBUCKET_CLONE_TOKEN }} ./bitbucket-source
+
+        shell: bash
+
+      - name: Verify the Checked-Out Branch
+        run: |
+          cd ./bitbucket-source
+          echo "Current branch: $(git branch --show-current)"
+          echo "Latest Commit Message: $(git log -1 --pretty=format:'%s')"
+        shell: bash
