@@ -1,12 +1,12 @@
-name: Build and Deploy Tauri App
+name: Build and Deploy Tauri App (macOS)
 
 on:
   repository_dispatch:
-    types: [ bitbucket-trigger ]
+    types: [bitbucket-trigger]
   push:
-    branches: [ develop ]
+    branches: [develop]
   pull_request:
-    branches: [ develop ]
+    branches: [develop]
   workflow_dispatch:
 
 jobs:
@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, windows-latest]
+        platform: [macos-latest]
 
     runs-on: ${{ matrix.platform }}
 
@@ -42,7 +42,6 @@ jobs:
       - name: Clone from Bitbucket (Dynamic Branch)
         run: |
           git clone --branch ${{ env.BRANCH }} ${{ secrets.BITBUCKET_CLONE_TOKEN }} ./bitbucket-source
-
         shell: bash
 
       - name: Verify the Checked-Out Branch
@@ -50,4 +49,61 @@ jobs:
           cd ./bitbucket-source
           echo "Current branch: $(git branch --show-current)"
           echo "Latest Commit Message: $(git log -1 --pretty=format:'%s')"
+        shell: bash
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+          cache: 'yarn'
+          cache-dependency-path: './bitbucket-source/yarn.lock'
+
+      - name: Install Yarn dependencies
+        run: |
+          cd ./bitbucket-source
+          yarn install --frozen-lockfile
+        shell: bash
+
+      - name: Install Rust (rustup)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './bitbucket-source/apps/akina-care/src-tauri -> target'
+
+      - name: Import macOS Code Signing Certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with: 
+          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
+          p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+
+      - name: Import Apple API Key for Notarization
+        run: |
+          echo "${{ secrets.APPLE_API_KEY }}" | base64 --decode > $RUNNER_TEMP/AuthKey.p8
+        shell: bash
+
+      - name: Install cargo-binstall
+        uses: taiki-e/install-action@cargo-binstall
+      
+      - name: Install Tauri CLI
+        run: cargo binstall tauri-cli --no-confirm
+        shell: bash
+
+      - name: Build Tauri App (macOS)
+        run: |
+          ls -al $RUNNER_TEMP
+          rustup target add x86_64-apple-darwin
+          rustup target add aarch64-apple-darwin
+          cd ./bitbucket-source/apps/akina-care/src-tauri/
+          cargo tauri build --target x86_64-apple-darwin
+          cargo tauri build --target aarch64-apple-darwin
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_API_ISSUER: 887c8bc2-9ed7-47b4-ac70-43fc61065783
+          APPLE_API_KEY: 4YKKBS538P
+          APPLE_NOTARIZATION: true
+          APPLE_NOTARIZATION_TOOL: notarytool
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
         shell: bash
