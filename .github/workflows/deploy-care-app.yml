@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest]
+        platform: [windows-latest]
 
     runs-on: ${{ matrix.platform }}
 
@@ -73,12 +73,14 @@ jobs:
           workspaces: './bitbucket-source/apps/akina-care/src-tauri -> target'
 
       - name: Import macOS Code Signing Certificate
+        if: matrix.platform == 'macos-latest'
         uses: apple-actions/import-codesign-certs@v3
         with: 
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
           p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
 
       - name: Import Apple API Key for Notarization
+        if: matrix.platform == 'macos-latest'
         run: |
           echo "${{ secrets.APPLE_API_KEY }}" | base64 --decode > $RUNNER_TEMP/AuthKey.p8
         shell: bash
@@ -90,7 +92,9 @@ jobs:
         run: cargo binstall tauri-cli --no-confirm
         shell: bash
 
+      # macOS Build
       - name: Build Tauri App (macOS)
+        if: matrix.platform == 'macos-latest'
         run: |
           ls -al $RUNNER_TEMP
           rustup target add x86_64-apple-darwin
@@ -106,4 +110,29 @@ jobs:
           APPLE_NOTARIZATION: true
           APPLE_NOTARIZATION_TOOL: notarytool
           APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
+        shell: bash
+
+      # Windows-specific setup
+      - name: Install Windows Dependencies
+        if: matrix.platform == 'windows-latest'
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          rustup component add rustfmt clippy
+        shell: bash
+
+      - name: Install WebView2 Runtime (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: |
+          curl -o MicrosoftEdgeWebView2Setup.exe https://go.microsoft.com/fwlink/p/?LinkId=2124703
+          ./MicrosoftEdgeWebView2Setup.exe /silent /install
+        shell: bash
+
+      - name: Build Tauri App (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: |
+          cd ./bitbucket-source/apps/akina-care/src-tauri/
+          cargo tauri build --target x86_64-pc-windows-msvc
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         shell: bash
