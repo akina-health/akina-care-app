@@ -35,7 +35,7 @@ jobs:
           if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
             echo "BRANCH=${{ github.event.client_payload.branch }}" >> $GITHUB_ENV
           else
-            echo "BRANCH=develop" >> $GITHUB_ENV
+            echo "BRANCH=try/deploy-update-mac" >> $GITHUB_ENV
           fi
         shell: bash
 
@@ -112,6 +112,43 @@ jobs:
           APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
         shell: bash
 
+      # - name: Debug Azure Login
+      #   run: |
+      #     echo "Testing Azure login"
+      #     az login --service-principal --username "${{ secrets.AZURE_CLIENT_ID }}" -p="${{ secrets.AZURE_CLIENT_SECRET }}" --tenant "${{ secrets.AZURE_TENANT_ID }}"
+      #   shell: bash
+
+      - name: Cache trusted-signing-cli
+        id: cache-cli
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/bin/trusted-signing-cli
+          key: trusted-signing-cli-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Trusted Signing CLI
+        if: steps.cache-cli.outputs.cache-hit != 'true'
+        run: |
+          echo "Installing trusted-signing-cli..."
+          cargo install trusted-signing-cli
+          echo "Installation complete"
+        shell: bash
+
+      - name: Add cargo bin to path
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        shell: bash
+
+      # - name: Test Trusted Signing CLI
+      #   run: |
+      #     echo "Testing signing process"
+      #     echo "int main() { return 0; }" > test.c
+      #     gcc test.c -o test.exe
+      #     trusted-signing-cli -e https://weu.codesigning.azure.net/ -a AkinaCareDesktop -c AkinaCareAppCertificateProfile test.exe
+      #   env:
+      #     AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      #     AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      #     AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      #   shell: bash
+
       # Windows-specific setup
       - name: Install Windows Dependencies
         if: matrix.platform == 'windows-latest'
@@ -131,8 +168,20 @@ jobs:
         if: matrix.platform == 'windows-latest'
         run: |
           cd ./bitbucket-source/apps/akina-care/src-tauri/
-          cargo tauri build --target x86_64-pc-windows-msvc
+          cargo install trusted-signing-cli
+          cargo tauri build --target x86_64-pc-windows-msvc --verbose
         env:
-          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         shell: bash
+
+
+      - name: upload assets
+        uses: crabnebula-dev/cloud-release@v0
+        with:
+          command: release upload ${{ env.CN_APPLICATION }} --framework tauri
+          api-key: ${{ secrets.CN_API_KEY }}
+          path: ./src-tauri
