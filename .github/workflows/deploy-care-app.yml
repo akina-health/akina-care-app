@@ -1,4 +1,4 @@
-name: Build and Deploy Tauri App (macOS)
+name: Build and Deploy Tauri App (macOS & windows)
 
 on:
   repository_dispatch:
@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [windows-latest]
+        platform: [macos-latest, windows-latest]
 
     runs-on: ${{ matrix.platform }}
 
@@ -51,6 +51,7 @@ jobs:
           echo "Latest Commit Message: $(git log -1 --pretty=format:'%s')"
         shell: bash
 
+      # install related dependencies
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
@@ -72,6 +73,15 @@ jobs:
         with:
           workspaces: './bitbucket-source/apps/akina-care/src-tauri -> target'
 
+      - name: Install cargo-binstall
+        uses: taiki-e/install-action@cargo-binstall
+      
+      - name: Install Tauri CLI
+        run: cargo binstall tauri-cli --no-confirm
+        shell: bash
+
+
+      # macOS Signing & Notarization
       - name: Import macOS Code Signing Certificate
         if: matrix.platform == 'macos-latest'
         uses: apple-actions/import-codesign-certs@v3
@@ -85,12 +95,6 @@ jobs:
           echo "${{ secrets.APPLE_API_KEY }}" | base64 --decode > $RUNNER_TEMP/AuthKey.p8
         shell: bash
 
-      - name: Install cargo-binstall
-        uses: taiki-e/install-action@cargo-binstall
-      
-      - name: Install Tauri CLI
-        run: cargo binstall tauri-cli --no-confirm
-        shell: bash
 
       # macOS Build
       - name: Build Tauri App (macOS)
@@ -100,8 +104,8 @@ jobs:
           rustup target add x86_64-apple-darwin
           rustup target add aarch64-apple-darwin
           cd ./bitbucket-source/apps/akina-care/src-tauri/
-          cargo tauri build --target x86_64-apple-darwin
-          cargo tauri build --target aarch64-apple-darwin
+          VITE_AUTH0_REDIRECT_URI=tauri://localhost cargo tauri build --target x86_64-apple-darwin
+          VITE_AUTH0_REDIRECT_URI=tauri://localhost cargo tauri build --target aarch64-apple-darwin
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -112,12 +116,8 @@ jobs:
           APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
         shell: bash
 
-      # - name: Debug Azure Login
-      #   run: |
-      #     echo "Testing Azure login"
-      #     az login --service-principal --username "${{ secrets.AZURE_CLIENT_ID }}" -p="${{ secrets.AZURE_CLIENT_SECRET }}" --tenant "${{ secrets.AZURE_TENANT_ID }}"
-      #   shell: bash
 
+      # Windows azure signing cli
       - name: Cache trusted-signing-cli
         id: cache-cli
         uses: actions/cache@v3
@@ -137,19 +137,7 @@ jobs:
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
         shell: bash
 
-      # - name: Test Trusted Signing CLI
-      #   run: |
-      #     echo "Testing signing process"
-      #     echo "int main() { return 0; }" > test.c
-      #     gcc test.c -o test.exe
-      #     trusted-signing-cli -e https://weu.codesigning.azure.net/ -a AkinaCareDesktop -c AkinaCareAppCertificateProfile test.exe
-      #   env:
-      #     AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      #     AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      #     AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      #   shell: bash
-
-      # Windows-specific setup
+      # Windows-specific setup & build
       - name: Install Windows Dependencies
         if: matrix.platform == 'windows-latest'
         run: |
@@ -168,8 +156,7 @@ jobs:
         if: matrix.platform == 'windows-latest'
         run: |
           cd ./bitbucket-source/apps/akina-care/src-tauri/
-          cargo install trusted-signing-cli
-          cargo tauri build --target x86_64-pc-windows-msvc --verbose
+          VITE_AUTH0_REDIRECT_URI=http://tauri.localhost cargo tauri build --target x86_64-pc-windows-msvc --verbose
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -179,9 +166,10 @@ jobs:
         shell: bash
 
 
+      # upload to crabnebula
       - name: upload assets
         uses: crabnebula-dev/cloud-release@v0
         with:
-          command: release upload ${{ env.CN_APPLICATION }} --framework tauri
+          command: release upload care --framework tauri
           api-key: ${{ secrets.CN_API_KEY }}
-          path: ./src-tauri
+          path: ./bitbucket-source/apps/akina-care/src-tauri/
